@@ -86,6 +86,80 @@ void runOCR(const cv::Mat& mat)
     }
     // 3.4. 输出：输出正常情况
     else {
+        
+        // 在这里对 outJ["data"] 进行排序(针对左右结构版面)
+        
+        // 1. 过滤相关数据
+        nlohmann::json filteredData = nlohmann::json::array();
+        for (const auto& item : outJ["data"]) {
+            std::string text = item["text"];
+            // 去除空白
+            text.erase(0, text.find_first_not_of(" \t\n\r\f\v"));
+            text.erase(text.find_last_not_of(" \t\n\r\f\v") + 1);
+
+            // 过滤条件：分数>0.5，非数字，长度>2
+            bool isNum = true;
+            for (char c : text) {
+                if (!std::isdigit(c)) {
+                    isNum = false;
+                    break;
+                }
+            }
+
+            if (item["score"] > 0.5 && !isNum && text.length() > 2) {
+                filteredData.push_back(item);
+            }
+        }
+
+        // 2. 确定左右列的阈值
+        const float columnThresholdX = 450.0f;
+
+        // 3. 将数据分为左右两列
+        nlohmann::json leftColumnData = nlohmann::json::array();
+        nlohmann::json rightColumnData = nlohmann::json::array();
+
+        for (const auto& item : filteredData) {
+            // 使用左上角的x坐标(box[0][0])来确定列
+            if (item["box"][0][0] < columnThresholdX) {
+                leftColumnData.push_back(item);
+            }
+            else {
+                rightColumnData.push_back(item);
+            }
+        }
+
+        // 4. 按y坐标对每列进行垂直排序
+        auto sortByY = [](const nlohmann::json& a, const nlohmann::json& b) {
+            return a["box"][0][1] < b["box"][0][1];
+        };
+
+        std::sort(leftColumnData.begin(), leftColumnData.end(), sortByY);
+        std::sort(rightColumnData.begin(), rightColumnData.end(), sortByY);
+
+        // 5. 合并文本：先左列，后右列
+        nlohmann::json sortedData = nlohmann::json::array();
+
+        for (const auto& item : leftColumnData) {
+            sortedData.push_back(item);
+        }
+
+        for (const auto& item : rightColumnData) {
+            sortedData.push_back(item);
+        }
+
+        // 6. 将排序后的数据添加到输出JSON
+        outJ["data"] = sortedData;
+
+        // 7. 同时提取排序后的文本
+        std::string sortedText;
+        for (size_t i = 0; i < sortedData.size(); ++i) {
+            sortedText += sortedData[i]["text"].get<std::string>();
+            if (i < sortedData.size() - 1) {
+                sortedText += "\n";
+            }
+        }
+        outJ["text"] = sortedText;
+        
         print_json(outJ);
     }
 }
